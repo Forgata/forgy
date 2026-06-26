@@ -3,4 +3,5 @@ dist/
 *.lock
 *.log
 *.logs
+*.pid
 .env
