@@ -1,0 +1,26 @@
+{
+  "name": "forgy",
+  "version": "1.0.0",
+  "description": "",
+  "homepage": "https://github.com/Forgata/forgy#readme",
+  "bugs": {
+    "url": "https://github.com/Forgata/forgy/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Forgata/forgy.git"
+  },
+  "license": "MIT",
+  "author": "Forgata",
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "tsc",
+    "dev": "npm run build && node dist/main.js"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.1",
+    "typescript": "^6.0.3"
+  }
+}
