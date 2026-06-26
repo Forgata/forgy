@@ -25,51 +25,63 @@ const WINDOW_SIZE = 5;
 
 const rssiHistory: number[] = [];
 let isWorkstationLocked = false;
+let pythonWorker: ChildProcessWithoutNullStreams | null = null;
 
 console.log("Proximity Lock Engine: ACTIVE");
 console.log("------------------------------------------------------------");
 
-const pythonWorker: ChildProcessWithoutNullStreams = spawn("python", [
-  pythonScriptPath,
-]);
+function startPythonSensor() {
+  console.log("Initializing Bluetooth hardware link...");
 
-pythonWorker.stdout.on("data", (data: Buffer) => {
-  const cleanOutput: string = data.toString().trim();
-  const lines: string[] = cleanOutput.split(/\r?\n/);
+  pythonWorker = spawn("python", [pythonScriptPath]);
 
-  lines.forEach((line: string) => {
-    const rssi: number = parseInt(line, 10);
+  pythonWorker.stdout.on("data", (data: Buffer) => {
+    const cleanOutput: string = data.toString().trim();
+    const lines: string[] = cleanOutput.split(/\r?\n/);
 
-    if (!isNaN(rssi)) {
-      rssiHistory.push(rssi);
-      if (rssiHistory.length > WINDOW_SIZE) {
-        rssiHistory.shift();
+    lines.forEach((line: string) => {
+      const rssi: number = parseInt(line, 10);
+
+      if (!isNaN(rssi)) {
+        rssiHistory.push(rssi);
+        if (rssiHistory.length > WINDOW_SIZE) {
+          rssiHistory.shift();
+        }
+
+        const sum = rssiHistory.reduce((acc, val) => acc + val, 0);
+        const rollingAverage = Math.round(sum / rssiHistory.length);
+
+        if (fs.existsSync(pauseFilePath)) {
+          return;
+        }
+
+        if (rollingAverage <= LOCK_THRESHOLD && !isWorkstationLocked) {
+          triggerWindowsLock();
+        } else if (rollingAverage > LOCK_THRESHOLD) {
+          isWorkstationLocked = false;
+        }
       }
+    });
+  });
 
-      const sum = rssiHistory.reduce((acc, val) => acc + val, 0);
-      const rollingAverage = Math.round(sum / rssiHistory.length);
+  pythonWorker.stderr.on("data", (data: Buffer) => {
+    fs.appendFileSync(
+      path.join(process.cwd(), "error.log"),
+      `${new Date().toISOString()} - [Python Error]: ${data.toString().trim()}\n`,
+    );
+  });
 
-      const isPaused = fs.existsSync(pauseFilePath);
-
-      if (isPaused) {
-        console.log(
-          `[PAUSED] Signal: ${rssi} dBm | Lock bypassed via lockfile.`,
-        );
-        return;
-      }
-
-      console.log(
-        `[Signal] Live: ${rssi} dBm | Smoothed Avg: ${rollingAverage} dBm`,
+  pythonWorker.on("close", (code) => {
+    if (code !== 0 && fs.existsSync(pidFilePath)) {
+      fs.appendFileSync(
+        path.join(process.cwd(), "error.log"),
+        `${new Date().toISOString()} - Hardware link dropped (Code ${code}). Reconnecting in 5s...\n`,
       );
 
-      if (rollingAverage <= LOCK_THRESHOLD && !isWorkstationLocked) {
-        triggerWindowsLock();
-      } else if (rollingAverage > LOCK_THRESHOLD) {
-        isWorkstationLocked = false;
-      }
+      setTimeout(startPythonSensor, 5000);
     }
   });
-});
+}
 
 function triggerWindowsLock(): void {
   isWorkstationLocked = true;
@@ -80,16 +92,8 @@ function triggerWindowsLock(): void {
   });
 }
 
-pythonWorker.stderr.on("data", (data: Buffer) => {
-  const errorMessage = data.toString().trim();
-  console.error(`[Python Error]: ${errorMessage}`);
-
-  fs.appendFileSync(
-    path.join(process.cwd(), "error.log"),
-    `${new Date().toISOString()} - ${errorMessage}\n`,
-  );
-});
-
-pythonWorker.on("close", () => {
+process.on("exit", () => {
   if (fs.existsSync(pidFilePath)) fs.unlinkSync(pidFilePath);
 });
+
+startPythonSensor();
