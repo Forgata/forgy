@@ -80,6 +80,16 @@ function triggerWindowsLock(): void {
   });
 }
 
+pythonWorker.stderr.on("data", (data: Buffer) => {
+  const errorMessage = data.toString().trim();
+  console.error(`[Python Error]: ${errorMessage}`);
+
+  fs.appendFileSync(
+    path.join(process.cwd(), "error.log"),
+    `${new Date().toISOString()} - ${errorMessage}\n`,
+  );
+});
+
 pythonWorker.on("close", () => {
   if (fs.existsSync(pidFilePath)) fs.unlinkSync(pidFilePath);
 });
