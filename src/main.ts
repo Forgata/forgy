@@ -1,49 +1,77 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
+import {
+  spawn,
+  exec,
+  type ChildProcessWithoutNullStreams,
+} from "child_process";
 import path from "path";
 
-// Target the Python tracking script
 const pythonScriptPath: string = path.join(
   process.cwd(),
   "src",
   "stream_rssi.py",
 );
 
-console.log("Starting Proximity Link Engine (TypeScript)...");
-console.log("Listening for your Redmi Note 14 via background Python loop...");
+const LOCK_THRESHOLD = -75; // Anything weaker (e.g., -76 to -90) triggers the lock
+const WINDOW_SIZE = 5; // Number of signals to average out (prevents accidental locks)
+
+const rssiHistory: number[] = [];
+let isWorkstationLocked = false;
+
+console.log("Proximity Lock Engine: ACTIVE");
+console.log(`Desk Baseline: ~ -40 dBm`);
+console.log(`Lock Threshold set to: ${LOCK_THRESHOLD} dBm`);
 console.log("------------------------------------------------------------");
 
-// Spawn Python as a background worker process
 const pythonWorker: ChildProcessWithoutNullStreams = spawn("python", [
   pythonScriptPath,
 ]);
 
-// Listen to the data stream coming from Python's console (stdout)
 pythonWorker.stdout.on("data", (data: Buffer) => {
   const cleanOutput: string = data.toString().trim();
-
-  // Split output by newlines in case multiple readings arrive simultaneously
   const lines: string[] = cleanOutput.split(/\r?\n/);
 
   lines.forEach((line: string) => {
     const rssi: number = parseInt(line, 10);
 
     if (!isNaN(rssi)) {
-      // TypeScript safely handles our incoming signal strength
-      console.log(`[TS Engine] Live Phone Signal: ${rssi} dBm`);
+      rssiHistory.push(rssi);
+      if (rssiHistory.length > WINDOW_SIZE) rssiHistory.shift(); // Remove oldest reading
 
-      // TODO: Phase 3 distance filtration/lock command logic goes here
+      const sum = rssiHistory.reduce((acc, val) => acc + val, 0);
+      const rollingAverage = Math.round(sum / rssiHistory.length);
+
+      console.log(
+        `[Signal] Live: ${rssi} dBm | Smoothed Avg: ${rollingAverage} dBm`,
+      );
+
+      if (rollingAverage <= LOCK_THRESHOLD && !isWorkstationLocked)
+        triggerWindowsLock();
+      else if (rollingAverage > LOCK_THRESHOLD) isWorkstationLocked = false;
     }
   });
 });
 
-// Capture any structural Python errors
+/**
+ * Fires the native Windows API call to lock the screen instantly
+ */
+function triggerWindowsLock(): void {
+  isWorkstationLocked = true;
+  console.log("\n[ALERT] Signal threshold breached! Walking away detected.");
+  console.log("Locking Windows Workstation...");
+
+  exec("rundll32.exe user32.dll,LockWorkStation", (error) => {
+    if (error) console.error(`Failed to lock workstation: ${error.message}`);
+    else {
+      console.log("Workstation successfully locked.\n");
+      rssiHistory.length = 0;
+    }
+  });
+}
+
 pythonWorker.stderr.on("data", (data: Buffer) => {
-  console.error(`[Python Worker Error]: ${data.toString()}`);
+  console.error(`[Sensor Error]: ${data.toString()}`);
 });
 
-// Handle sudden worker terminations cleanly
 pythonWorker.on("close", (code: number | null) => {
-  console.log(
-    `\nProximity link broke. Worker process exited with code ${code}`,
-  );
+  console.log(`\nSensor went offline. Exit Code: ${code}`);
 });
