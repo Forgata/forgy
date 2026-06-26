@@ -1,0 +1,1 @@
+CreateObject("Wscript.Shell").Run "cmd /c C:\Users\gombw\Desktop\projects\forgy\run.bat", 0, False
